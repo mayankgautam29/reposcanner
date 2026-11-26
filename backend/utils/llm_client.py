@@ -1,7 +1,7 @@
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 
-import httpx
 from google import genai
 from google.genai import errors, types
 
@@ -11,6 +11,7 @@ RETRY_CODES = [429, 500, 503, 504]
 MAX_TRIES = 3
 WAIT_SECONDS = 2
 TIMEOUT_MS = 45_000
+DEADLINE_SECONDS = 50
 
 client = None
 
@@ -38,18 +39,33 @@ def explain_error(error):
     return f"Gemini returned an error ({error.code})."
 
 
+def send_with_deadline(model, contents, config):
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(lambda: get_client().models.generate_content(model=model, contents=contents, config=config))
+    try:
+        return future.result(timeout=DEADLINE_SECONDS)
+    finally:
+        pool.shutdown(wait=False)
+
+
 def generate(model, contents, config):
+    too_slow = ModelBusyError("Gemini took too long to answer. Wait a minute and scan again.")
+
     for attempt in range(1, MAX_TRIES + 1):
         try:
-            return get_client().models.generate_content(model=model, contents=contents, config=config)
-        except httpx.TimeoutException as error:
-            raise ModelBusyError("Gemini took too long to answer. Wait a minute and scan again.") from error
+            return send_with_deadline(model, contents, config)
+        except TimeoutError as error:
+            raise too_slow from error
         except errors.APIError as error:
             if error.code not in RETRY_CODES:
                 raise RuntimeError(explain_error(error)) from error
             if attempt == MAX_TRIES:
                 raise ModelBusyError(explain_error(error)) from error
             time.sleep(WAIT_SECONDS * attempt)
+        except Exception as error:
+            if "Timeout" in type(error).__name__:
+                raise too_slow from error
+            raise
 
 
 def ask_text(model, system_prompt, user_prompt):

@@ -1,5 +1,6 @@
 import os
 import subprocess
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -394,6 +395,10 @@ def test_all_models_busy_gives_a_clear_error(monkeypatch):
         run_with_busy_models(monkeypatch, set(pipeline.FREE_MODELS))
 
 
+class ReadTimeout(Exception):
+    pass
+
+
 def test_slow_gemini_is_treated_as_busy_without_retrying(monkeypatch):
     class SlowGemini:
         calls = 0
@@ -404,7 +409,7 @@ def test_slow_gemini_is_treated_as_busy_without_retrying(monkeypatch):
 
         def generate_content(self, model, contents, config):
             self.calls += 1
-            raise llm_client.httpx.ReadTimeout("too slow")
+            raise ReadTimeout("too slow")
 
     fake = SlowGemini()
     monkeypatch.setattr(llm_client, "get_client", lambda: fake)
@@ -419,3 +424,21 @@ def test_client_is_built_with_a_timeout(monkeypatch):
     monkeypatch.setattr(llm_client, "client", None)
 
     assert llm_client.get_client()._api_client._http_options.timeout == llm_client.TIMEOUT_MS
+
+
+def test_gemini_that_never_answers_hits_the_deadline(monkeypatch):
+    class HangingGemini:
+        models = None
+
+        def __init__(self):
+            self.models = self
+
+        def generate_content(self, model, contents, config):
+            time.sleep(1)
+            return type("Answer", (), {"text": "late"})()
+
+    monkeypatch.setattr(llm_client, "get_client", lambda: HangingGemini())
+    monkeypatch.setattr(llm_client, "DEADLINE_SECONDS", 0.1)
+
+    with pytest.raises(llm_client.ModelBusyError, match="took too long"):
+        llm_client.ask_text(SMALL_MODEL, "system", "prompt")
