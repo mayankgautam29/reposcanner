@@ -302,3 +302,46 @@ def test_gemini_client_is_created_once_and_kept(monkeypatch):
 
     assert first is second
 
+
+
+class BusyGemini:
+    def __init__(self, failures, code):
+        self.failures = failures
+        self.code = code
+        self.calls = 0
+        self.models = self
+
+    def generate_content(self, model, contents, config):
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise llm_client.errors.APIError(self.code, {"error": {"message": "busy"}})
+        return type("Answer", (), {"text": "done"})()
+
+
+def test_busy_gemini_is_retried_until_it_answers(monkeypatch):
+    fake = BusyGemini(failures=2, code=503)
+    monkeypatch.setattr(llm_client, "get_client", lambda: fake)
+    monkeypatch.setattr(llm_client.time, "sleep", lambda seconds: None)
+
+    assert llm_client.ask_text(SMALL_MODEL, "system", "prompt") == "done"
+    assert fake.calls == 3
+
+
+def test_busy_gemini_gives_a_friendly_error_after_all_tries(monkeypatch):
+    fake = BusyGemini(failures=99, code=503)
+    monkeypatch.setattr(llm_client, "get_client", lambda: fake)
+    monkeypatch.setattr(llm_client.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(RuntimeError, match="Gemini is busy right now"):
+        llm_client.ask_text(SMALL_MODEL, "system", "prompt")
+    assert fake.calls == llm_client.MAX_TRIES
+
+
+def test_rejected_key_is_not_retried(monkeypatch):
+    fake = BusyGemini(failures=99, code=400)
+    monkeypatch.setattr(llm_client, "get_client", lambda: fake)
+    monkeypatch.setattr(llm_client.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(RuntimeError, match="Check GEMINI_API_KEY"):
+        llm_client.ask_json(SMALL_MODEL, "system", "prompt")
+    assert fake.calls == 1
