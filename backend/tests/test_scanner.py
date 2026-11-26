@@ -8,7 +8,7 @@ import pipeline
 from agents import fetcher_agent, report_agent, review_agent, router_agent, rule_checker_agent, validator_agent
 from checks.health_check import check_health
 from checks.secret_check import find_secrets
-from config import SMALL_MODEL, STRONG_MODEL, check_free_models
+from config import SMALL_MODEL, STRONG_MODEL, VALIDATOR_MODEL, check_free_models
 from main import app
 from utils import llm_client
 
@@ -106,7 +106,7 @@ def run_with_fake_ai(monkeypatch, confidences):
     monkeypatch.setattr(pipeline.fetcher_agent, "run", lambda url: repo)
     monkeypatch.setattr(review_agent, "summarise_readme", lambda repo, model: "A small app.")
     monkeypatch.setattr(review_agent, "review_code", fake_review)
-    monkeypatch.setattr(validator_agent, "run", lambda review, code_sample: {"confidence": next(answers), "reason": "r"})
+    monkeypatch.setattr(validator_agent, "run", lambda review, code_sample, model: {"confidence": next(answers), "reason": "r"})
 
     return pipeline.scan_repo("https://github.com/owner/repo", []), calls
 
@@ -276,7 +276,7 @@ def test_paid_model_is_refused_before_any_call(monkeypatch):
 
 
 def test_default_models_are_all_free():
-    check_free_models(SMALL_MODEL, STRONG_MODEL, validator_agent.VALIDATOR_MODEL)
+    check_free_models(SMALL_MODEL, STRONG_MODEL, VALIDATOR_MODEL)
     with pytest.raises(ValueError):
         check_free_models("some-paid-model")
 
@@ -345,3 +345,50 @@ def test_rejected_key_is_not_retried(monkeypatch):
     with pytest.raises(RuntimeError, match="Check GEMINI_API_KEY"):
         llm_client.ask_json(SMALL_MODEL, "system", "prompt")
     assert fake.calls == 1
+
+
+def run_with_busy_models(monkeypatch, busy_models):
+    repo = make_repo([make_file("app.py", "print('hi')\n"), make_file("README.md", "# Hello")], ["README.md"])
+    used = {"review": [], "validator": []}
+
+    def fake_review(repo, model, code_sample, strict):
+        if model in busy_models:
+            raise llm_client.ModelBusyError("busy")
+        used["review"].append(model)
+        return {"score": 80, "summary": "ok", "problems": ["p"], "tips": ["Add tests"]}
+
+    def fake_validate(review, code_sample, model):
+        if model in busy_models:
+            raise llm_client.ModelBusyError("busy")
+        used["validator"].append(model)
+        return {"confidence": 90, "reason": "fine"}
+
+    monkeypatch.setattr(pipeline.fetcher_agent, "run", lambda url: repo)
+    monkeypatch.setattr(review_agent, "summarise_readme", lambda repo, model: "small app" if model not in busy_models else (_ for _ in ()).throw(llm_client.ModelBusyError("busy")))
+    monkeypatch.setattr(review_agent, "review_code", fake_review)
+    monkeypatch.setattr(validator_agent, "run", fake_validate)
+
+    log = []
+    return pipeline.scan_repo("https://github.com/owner/repo", log), used, log
+
+
+def test_busy_model_falls_back_to_another_free_model(monkeypatch):
+    busy = {SMALL_MODEL}
+    report, used, log = run_with_busy_models(monkeypatch, busy)
+
+    assert report["ai"]["status"] == "sure"
+    assert used["review"][0] not in busy
+    assert report["ai"]["models"]["review"] == used["review"][0]
+    assert report["ai"]["models"]["readme"] not in busy
+    assert any("is busy, trying another free model" in step["message"] for step in log)
+
+
+def test_validator_never_uses_the_review_model(monkeypatch):
+    report, used, log = run_with_busy_models(monkeypatch, set())
+
+    assert used["validator"][0] != used["review"][0]
+
+
+def test_all_models_busy_gives_a_clear_error(monkeypatch):
+    with pytest.raises(RuntimeError, match="Every free Gemini model is busy"):
+        run_with_busy_models(monkeypatch, set(pipeline.FREE_MODELS))

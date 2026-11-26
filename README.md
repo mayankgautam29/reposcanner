@@ -148,6 +148,8 @@ reposcanner/
 | Where are the model names set? | `backend/config.py` and `backend/.env` | `SMALL_MODEL`, `STRONG_MODEL`, `VALIDATOR_MODEL` |
 | Where is the prompt sent to Gemini? | `backend/agents/review_agent.py` | `review_code`, `summarise_readme` |
 | Where is Gemini actually called? | `backend/utils/llm_client.py` | `ask_text`, `ask_json` |
+| Where does Gemini get retried when it is busy? | `backend/utils/llm_client.py` | `generate` (3 tries per model), `ModelBusyError` |
+| Where does it switch to another free model? | `backend/pipeline.py` | `call_with_fallback`, `model_order` |
 | Where does the second model give confidence? | `backend/agents/validator_agent.py` | `run` |
 | Where is the "confidence below 70" check? | `backend/pipeline.py` | `review_with_retries` (`if validation["confidence"] >= CONFIDENCE_LIMIT`) |
 | Where is the limit 70 set? | `backend/config.py` | `CONFIDENCE_LIMIT` |
@@ -164,7 +166,8 @@ reposcanner/
 1. **Router** (`router_agent.py`): README summary always goes to the small model. Code review goes to the strong model if the code is bigger than 500 lines or secrets were found, otherwise to the small model.
 2. **Review**: the chosen model returns a JSON with score, summary, problems and tips.
 3. **Validator**: a different model reads the review and the same code and gives a confidence from 0 to 100.
-4. **Confidence gate** (limit 70):
+4. **Busy model:** if a Gemini model answers "busy" (503) or "limit" (429) three times in a row, the pipeline switches to another model from the free list and writes it in the agent log. The validator never uses the same model as the review.
+5. **Confidence gate** (limit 70):
    - Try 1: normal prompt, normal amount of code.
    - Try 2: stricter prompt and smaller code chunks.
    - Try 3: the strong model with the stricter prompt and smaller chunks.

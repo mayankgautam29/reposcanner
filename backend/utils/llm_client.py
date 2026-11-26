@@ -7,10 +7,14 @@ from google.genai import errors, types
 from config import GEMINI_API_KEY, check_free_models
 
 RETRY_CODES = [429, 500, 503, 504]
-MAX_TRIES = 4
-WAIT_SECONDS = 3
+MAX_TRIES = 3
+WAIT_SECONDS = 2
 
 client = None
+
+
+class ModelBusyError(RuntimeError):
+    pass
 
 
 def get_client():
@@ -37,8 +41,10 @@ def generate(model, contents, config):
         try:
             return get_client().models.generate_content(model=model, contents=contents, config=config)
         except errors.APIError as error:
-            if error.code not in RETRY_CODES or attempt == MAX_TRIES:
+            if error.code not in RETRY_CODES:
                 raise RuntimeError(explain_error(error)) from error
+            if attempt == MAX_TRIES:
+                raise ModelBusyError(explain_error(error)) from error
             time.sleep(WAIT_SECONDS * attempt)
 
 
