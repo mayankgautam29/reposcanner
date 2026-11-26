@@ -166,7 +166,7 @@ reposcanner/
 1. **Router** (`router_agent.py`): README summary always goes to the small model. Code review goes to the strong model if the code is bigger than 500 lines or secrets were found, otherwise to the small model.
 2. **Review**: the chosen model returns a JSON with score, summary, problems and tips.
 3. **Validator**: a different model reads the review and the same code and gives a confidence from 0 to 100.
-4. **Busy model:** if a Gemini model answers "busy" (503) or "limit" (429) three times in a row, the pipeline switches to another model from the free list and writes it in the agent log. The validator never uses the same model as the review.
+4. **Busy model:** if a Gemini model answers "busy" (503) or "limit" (429) three times in a row, the pipeline switches to another model from the free list and writes it in the agent log. The validator prefers a different model than the review; only if every other free model is busy does the review model check its own review, and the agent log says so. A 429 (limit reached) is not retried on the same model, other errors are retried up to 3 times, and every call has a 50 second deadline.
 5. **Confidence gate** (limit 70):
    - Try 1: normal prompt, normal amount of code.
    - Try 2: stricter prompt and smaller code chunks.
