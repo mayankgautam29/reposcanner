@@ -13,12 +13,14 @@ def model_order(first, avoid=None):
 
 
 def call_with_fallback(models, log, agent, action):
+    reasons = []
     for model in models:
         try:
             return model, action(model)
-        except ModelBusyError:
-            add_log(log, agent, f"{model} is busy, trying another free model")
-    raise RuntimeError("Every free Gemini model is busy right now. Wait a minute and scan again.")
+        except ModelBusyError as error:
+            reasons.append(f"{model}: {error}")
+            add_log(log, agent, f"{model} is busy ({error}), trying another free model")
+    raise RuntimeError(f"Every free Gemini model is busy right now ({'; '.join(reasons)}). Wait a minute and scan again.")
 
 
 def make_retry_plans(first_model):

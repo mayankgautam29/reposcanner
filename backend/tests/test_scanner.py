@@ -333,7 +333,7 @@ def test_busy_gemini_gives_a_friendly_error_after_all_tries(monkeypatch):
     monkeypatch.setattr(llm_client, "get_client", lambda: fake)
     monkeypatch.setattr(llm_client.time, "sleep", lambda seconds: None)
 
-    with pytest.raises(RuntimeError, match="Gemini is busy right now"):
+    with pytest.raises(RuntimeError, match="error 503"):
         llm_client.ask_text(SMALL_MODEL, "system", "prompt")
     assert fake.calls == llm_client.MAX_TRIES
 
@@ -381,7 +381,7 @@ def test_busy_model_falls_back_to_another_free_model(monkeypatch):
     assert used["review"][0] not in busy
     assert report["ai"]["models"]["review"] == used["review"][0]
     assert report["ai"]["models"]["readme"] not in busy
-    assert any("is busy, trying another free model" in step["message"] for step in log)
+    assert any("trying another free model" in step["message"] for step in log)
 
 
 def test_validator_never_uses_the_review_model(monkeypatch):
@@ -414,7 +414,7 @@ def test_slow_gemini_is_treated_as_busy_without_retrying(monkeypatch):
     fake = SlowGemini()
     monkeypatch.setattr(llm_client, "get_client", lambda: fake)
 
-    with pytest.raises(llm_client.ModelBusyError, match="took too long"):
+    with pytest.raises(llm_client.ModelBusyError, match="no answer within"):
         llm_client.ask_text(SMALL_MODEL, "system", "prompt")
     assert fake.calls == 1
 
@@ -440,5 +440,5 @@ def test_gemini_that_never_answers_hits_the_deadline(monkeypatch):
     monkeypatch.setattr(llm_client, "get_client", lambda: HangingGemini())
     monkeypatch.setattr(llm_client, "DEADLINE_SECONDS", 0.1)
 
-    with pytest.raises(llm_client.ModelBusyError, match="took too long"):
+    with pytest.raises(llm_client.ModelBusyError, match="no answer within"):
         llm_client.ask_text(SMALL_MODEL, "system", "prompt")

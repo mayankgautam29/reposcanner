@@ -30,10 +30,6 @@ def get_client():
 
 
 def explain_error(error):
-    if error.code == 429:
-        return "The free Gemini limit is used up for now (error 429). Wait a few minutes and scan again."
-    if error.code in RETRY_CODES:
-        return f"Gemini is busy right now (error {error.code}). Wait a minute and scan again."
     if error.code in (400, 401, 403):
         return f"Gemini refused the request (error {error.code}). Check GEMINI_API_KEY."
     return f"Gemini returned an error ({error.code})."
@@ -49,7 +45,7 @@ def send_with_deadline(model, contents, config):
 
 
 def generate(model, contents, config):
-    too_slow = ModelBusyError("Gemini took too long to answer. Wait a minute and scan again.")
+    too_slow = ModelBusyError(f"no answer within {DEADLINE_SECONDS} seconds")
 
     for attempt in range(1, MAX_TRIES + 1):
         try:
@@ -60,7 +56,7 @@ def generate(model, contents, config):
             if error.code not in RETRY_CODES:
                 raise RuntimeError(explain_error(error)) from error
             if attempt == MAX_TRIES:
-                raise ModelBusyError(explain_error(error)) from error
+                raise ModelBusyError(f"error {error.code}") from error
             time.sleep(WAIT_SECONDS * attempt)
         except Exception as error:
             if "Timeout" in type(error).__name__:
