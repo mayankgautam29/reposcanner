@@ -6,10 +6,16 @@ from google.genai import types
 from config import GEMINI_API_KEY, check_free_models
 
 
+client = None
+
+
 def get_client():
+    global client
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY is missing. Add it in backend/.env")
-    return genai.Client(api_key=GEMINI_API_KEY)
+    if client is None:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+    return client
 
 
 def ask_text(model, system_prompt, user_prompt):

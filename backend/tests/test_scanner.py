@@ -291,3 +291,14 @@ def test_backend_refuses_to_start_with_a_paid_model():
 
     assert result.returncode != 0
     assert "free model list" in result.stderr
+
+
+def test_gemini_client_is_created_once_and_kept(monkeypatch):
+    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(llm_client, "client", None)
+
+    first = llm_client.get_client()
+    second = llm_client.get_client()
+
+    assert first is second
+
