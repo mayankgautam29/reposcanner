@@ -392,3 +392,30 @@ def test_validator_never_uses_the_review_model(monkeypatch):
 def test_all_models_busy_gives_a_clear_error(monkeypatch):
     with pytest.raises(RuntimeError, match="Every free Gemini model is busy"):
         run_with_busy_models(monkeypatch, set(pipeline.FREE_MODELS))
+
+
+def test_slow_gemini_is_treated_as_busy_without_retrying(monkeypatch):
+    class SlowGemini:
+        calls = 0
+        models = None
+
+        def __init__(self):
+            self.models = self
+
+        def generate_content(self, model, contents, config):
+            self.calls += 1
+            raise llm_client.httpx.ReadTimeout("too slow")
+
+    fake = SlowGemini()
+    monkeypatch.setattr(llm_client, "get_client", lambda: fake)
+
+    with pytest.raises(llm_client.ModelBusyError, match="took too long"):
+        llm_client.ask_text(SMALL_MODEL, "system", "prompt")
+    assert fake.calls == 1
+
+
+def test_client_is_built_with_a_timeout(monkeypatch):
+    monkeypatch.setattr(llm_client, "GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(llm_client, "client", None)
+
+    assert llm_client.get_client()._api_client._http_options.timeout == llm_client.TIMEOUT_MS

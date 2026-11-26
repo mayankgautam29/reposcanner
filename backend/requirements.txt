@@ -2,5 +2,6 @@ fastapi
 uvicorn[standard]
 gitpython
 google-genai
+httpx
 reportlab
 python-dotenv

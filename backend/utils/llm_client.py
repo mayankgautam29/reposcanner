@@ -1,6 +1,7 @@
 import json
 import time
 
+import httpx
 from google import genai
 from google.genai import errors, types
 
@@ -9,6 +10,7 @@ from config import GEMINI_API_KEY, check_free_models
 RETRY_CODES = [429, 500, 503, 504]
 MAX_TRIES = 3
 WAIT_SECONDS = 2
+TIMEOUT_MS = 45_000
 
 client = None
 
@@ -22,7 +24,7 @@ def get_client():
     if not GEMINI_API_KEY:
         raise RuntimeError("GEMINI_API_KEY is missing. Add it in backend/.env")
     if client is None:
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(timeout=TIMEOUT_MS))
     return client
 
 
@@ -40,6 +42,8 @@ def generate(model, contents, config):
     for attempt in range(1, MAX_TRIES + 1):
         try:
             return get_client().models.generate_content(model=model, contents=contents, config=config)
+        except httpx.TimeoutException as error:
+            raise ModelBusyError("Gemini took too long to answer. Wait a minute and scan again.") from error
         except errors.APIError as error:
             if error.code not in RETRY_CODES:
                 raise RuntimeError(explain_error(error)) from error
