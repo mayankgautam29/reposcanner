@@ -44,11 +44,13 @@ def review_with_retries(repo, first_model, log):
         add_log(log, "AI Review Agent", f"Try {number} ({plan['note']}) using {review_model}: score {review['score']}/100")
 
         validator_model, validation = call_with_fallback(
-            model_order(VALIDATOR_MODEL, avoid=review_model),
+            model_order(VALIDATOR_MODEL, avoid=review_model) + [review_model],
             log,
             "Validator Agent",
             lambda model: validator_agent.run(review, code_sample, model),
         )
+        if validator_model == review_model:
+            add_log(log, "Validator Agent", "No other free model answered, so the review model checked its own review")
         add_log(log, "Validator Agent", f"Try {number} using {validator_model}: confidence {validation['confidence']}/100. {validation['reason']}")
 
         if validation["confidence"] >= CONFIDENCE_LIMIT:

@@ -55,7 +55,7 @@ def generate(model, contents, config):
         except errors.APIError as error:
             if error.code not in RETRY_CODES:
                 raise RuntimeError(explain_error(error)) from error
-            if attempt == MAX_TRIES:
+            if attempt == MAX_TRIES or error.code == 429:
                 raise ModelBusyError(f"error {error.code}") from error
             time.sleep(WAIT_SECONDS * attempt)
         except Exception as error:

@@ -442,3 +442,23 @@ def test_gemini_that_never_answers_hits_the_deadline(monkeypatch):
 
     with pytest.raises(llm_client.ModelBusyError, match="no answer within"):
         llm_client.ask_text(SMALL_MODEL, "system", "prompt")
+
+
+def test_rate_limit_is_not_retried_on_the_same_model(monkeypatch):
+    fake = BusyGemini(failures=99, code=429)
+    monkeypatch.setattr(llm_client, "get_client", lambda: fake)
+    monkeypatch.setattr(llm_client.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(llm_client.ModelBusyError, match="error 429"):
+        llm_client.ask_text(SMALL_MODEL, "system", "prompt")
+    assert fake.calls == 1
+
+
+def test_validator_reuses_review_model_only_as_last_resort(monkeypatch):
+    others_busy = set(pipeline.FREE_MODELS) - {SMALL_MODEL}
+    report, used, log = run_with_busy_models(monkeypatch, others_busy)
+
+    assert used["review"] == [SMALL_MODEL]
+    assert used["validator"] == [SMALL_MODEL]
+    assert report["ai"]["status"] == "sure"
+    assert any("checked its own review" in step["message"] for step in log)
