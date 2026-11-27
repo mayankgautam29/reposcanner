@@ -1,4 +1,4 @@
-from agents import fetcher_agent, report_agent, review_agent, router_agent, rule_checker_agent, validator_agent
+from agents import detector_agent, fetcher_agent, report_agent, review_agent, router_agent, rule_checker_agent, validator_agent
 from config import CONFIDENCE_LIMIT, FREE_MODELS, NORMAL_CHUNK_CHARS, SMALL_CHUNK_CHARS, STRONG_MODEL, VALIDATOR_MODEL
 from utils.llm_client import ModelBusyError
 
@@ -89,6 +89,39 @@ def run_ai_review(repo, rules, log):
     }
 
 
+def run_ai_detection(repo, rules, log):
+    if repo["code_lines"] == 0:
+        add_log(log, "AI Detector Agent", "No source code found, so the AI-written code check is skipped")
+        return detector_agent.empty_result("skipped")
+
+    first_model, reason = router_agent.choose_model("detect_ai_code", repo, rules)
+    add_log(log, "Router Agent", f"AI-written code check goes to {first_model} ({reason})")
+
+    try:
+        model, result = call_with_fallback(
+            model_order(first_model),
+            log,
+            "AI Detector Agent",
+            lambda model: detector_agent.run(repo, model),
+        )
+    except Exception as error:
+        add_log(log, "AI Detector Agent", f"Could not estimate AI-written code: {error}")
+        return detector_agent.empty_result("unavailable")
+
+    if result["status"] == "skipped":
+        add_log(log, "AI Detector Agent", "The code files are too small to estimate, so the check is skipped")
+        return result
+
+    result["model"] = model
+    result["code_lines"] = repo["code_lines"]
+    add_log(
+        log,
+        "AI Detector Agent",
+        f"Estimated {result['percent']}% AI-written ({result['label']}) from {result['files_checked']} file(s) using {model}",
+    )
+    return result
+
+
 def scan_repo(url, log):
     repo = fetcher_agent.run(url)
     add_log(log, "Fetcher Agent", f"Downloaded {repo['name']}: {repo['total_files']} files, {repo['total_lines']} lines")
@@ -97,7 +130,8 @@ def scan_repo(url, log):
     add_log(log, "Rule Checker Agent", f"Found {len(rules['secrets'])} secret(s), rule score {rules['score']}/100")
 
     ai = run_ai_review(repo, rules, log)
+    detection = run_ai_detection(repo, rules, log)
 
-    report = report_agent.build_report(repo, rules, ai, log)
+    report = report_agent.build_report(repo, rules, ai, detection, log)
     add_log(log, "Report Agent", f"Final score {report['final_score']}/100 ({report['grade']})")
     return report

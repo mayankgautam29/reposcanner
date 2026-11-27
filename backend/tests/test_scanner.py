@@ -6,14 +6,22 @@ import pytest
 from fastapi.testclient import TestClient
 
 import pipeline
-from agents import fetcher_agent, report_agent, review_agent, router_agent, rule_checker_agent, validator_agent
+from agents import detector_agent, fetcher_agent, report_agent, review_agent, router_agent, rule_checker_agent, validator_agent
 from checks.health_check import check_health
 from checks.secret_check import find_secrets
 from config import SMALL_MODEL, STRONG_MODEL, VALIDATOR_MODEL, check_free_models
 from main import app
-from utils import llm_client
+from utils import llm_client, pdf_writer
 
 FAKE_KEY = "sk-" + "a1B2c3D4e5F6g7H8i9J0k1L2"
+
+
+@pytest.fixture(autouse=True)
+def block_real_detector_calls(monkeypatch):
+    def refuse(model, system_prompt, user_prompt):
+        raise RuntimeError("blocked in tests")
+
+    monkeypatch.setattr(detector_agent, "ask_json", refuse)
 
 
 def make_file(path, text):
@@ -462,3 +470,124 @@ def test_validator_reuses_review_model_only_as_last_resort(monkeypatch):
     assert used["validator"] == [SMALL_MODEL]
     assert report["ai"]["status"] == "sure"
     assert any("checked its own review" in step["message"] for step in log)
+
+
+def big_python_file(path, lines):
+    return make_file(path, ("value = 1" + chr(10)) * lines)
+
+
+def test_detector_weights_files_by_their_lines(monkeypatch):
+    repo = make_repo([big_python_file("big.py", 100), big_python_file("small.py", 20)], ["README.md"])
+    answer = {
+        "files": [{"path": "small.py", "ai_percent": 10}, {"path": "big.py", "ai_percent": 90}, {"path": "ghost.py", "ai_percent": 99}],
+        "signals": ["Very even style"],
+        "confidence": 65,
+    }
+    monkeypatch.setattr(detector_agent, "ask_json", lambda model, system_prompt, user_prompt: answer)
+
+    result = detector_agent.run(repo, SMALL_MODEL)
+
+    assert result["status"] == "done"
+    assert result["percent"] == 77
+    assert result["label"] == "Mostly AI-written"
+    assert [item["path"] for item in result["files"]] == ["big.py", "small.py"]
+    assert result["files_checked"] == 2
+    assert result["lines_checked"] == 120
+    assert result["confidence"] == 65
+    assert result["signals"] == ["Very even style"]
+
+
+@pytest.mark.parametrize("percent,label", [(0, "Mostly human-written"), (29, "Mostly human-written"), (30, "Mixed"), (69, "Mixed"), (70, "Mostly AI-written"), (100, "Mostly AI-written")])
+def test_detector_labels(percent, label):
+    assert detector_agent.get_label(percent) == label
+
+
+def test_detector_keeps_percent_between_0_and_100(monkeypatch):
+    repo = make_repo([big_python_file("a.py", 30)], ["README.md"])
+    monkeypatch.setattr(detector_agent, "ask_json", lambda model, system_prompt, user_prompt: {"files": [{"path": "a.py", "ai_percent": 250}]})
+
+    assert detector_agent.run(repo, SMALL_MODEL)["percent"] == 100
+
+
+def test_detector_skips_tiny_files_without_calling_the_ai(monkeypatch):
+    repo = make_repo([make_file("tiny.py", "print('hi')")], ["README.md"])
+
+    assert detector_agent.run(repo, SMALL_MODEL)["status"] == "skipped"
+
+
+def test_detector_only_sends_the_biggest_files(monkeypatch):
+    files = [big_python_file(f"file{number}.py", 20 + number) for number in range(8)]
+    repo = make_repo(files, ["README.md"])
+    seen = {}
+
+    def fake(model, system_prompt, user_prompt):
+        seen["prompt"] = user_prompt
+        return {"files": [{"path": "file7.py", "ai_percent": 40}]}
+
+    monkeypatch.setattr(detector_agent, "ask_json", fake)
+    detector_agent.run(repo, SMALL_MODEL)
+
+    assert seen["prompt"].count("### ") == detector_agent.DETECT_FILES
+    assert "### file7.py" in seen["prompt"]
+    assert "### file0.py" not in seen["prompt"]
+
+
+def test_detector_complains_when_the_model_returns_nothing_useful(monkeypatch):
+    repo = make_repo([big_python_file("a.py", 30)], ["README.md"])
+    monkeypatch.setattr(detector_agent, "ask_json", lambda model, system_prompt, user_prompt: {"files": [{"path": "other.py", "ai_percent": 50}]})
+
+    with pytest.raises(ValueError):
+        detector_agent.run(repo, SMALL_MODEL)
+
+
+def scan_with_detector(monkeypatch, detector_answer):
+    repo = make_repo([big_python_file("app.py", 40), make_file("README.md", "# Hello")], ["README.md"], code_lines=40)
+    monkeypatch.setattr(pipeline.fetcher_agent, "run", lambda url: repo)
+    monkeypatch.setattr(review_agent, "summarise_readme", lambda repo, model: "A small app.")
+    monkeypatch.setattr(review_agent, "review_code", lambda repo, model, code_sample, strict: {"score": 80, "summary": "ok", "problems": [], "tips": []})
+    monkeypatch.setattr(validator_agent, "run", lambda review, code_sample, model: {"confidence": 90, "reason": "r"})
+    monkeypatch.setattr(detector_agent, "ask_json", detector_answer)
+
+    log = []
+    return pipeline.scan_repo("https://github.com/owner/repo", log), log
+
+
+def test_report_carries_the_ai_written_estimate(monkeypatch):
+    report, log = scan_with_detector(monkeypatch, lambda model, system_prompt, user_prompt: {"files": [{"path": "app.py", "ai_percent": 35}], "signals": ["Mixed style"], "confidence": 50})
+
+    assert report["ai_detection"]["status"] == "done"
+    assert report["ai_detection"]["percent"] == 35
+    assert report["ai_detection"]["label"] == "Mixed"
+    assert report["ai_detection"]["model"] == SMALL_MODEL
+    assert report["ai_detection"]["code_lines"] == 40
+    assert any(step["agent"] == "AI Detector Agent" and "35%" in step["message"] for step in log)
+    assert report["final_score"] == round((report["rules"]["score"] + 80) / 2)
+
+
+def test_scan_still_works_when_the_ai_check_fails(monkeypatch):
+    def always_busy(model, system_prompt, user_prompt):
+        raise llm_client.ModelBusyError("error 503")
+
+    report, log = scan_with_detector(monkeypatch, always_busy)
+
+    assert report["ai_detection"]["status"] == "unavailable"
+    assert report["ai"]["status"] == "sure"
+    assert any("Could not estimate AI-written code" in step["message"] for step in log)
+
+
+def test_scan_without_code_skips_the_ai_check(monkeypatch):
+    repo = make_repo([make_file("README.md", "# Hello")], ["README.md"], code_lines=0)
+    monkeypatch.setattr(pipeline.fetcher_agent, "run", lambda url: repo)
+
+    report = pipeline.scan_repo("https://github.com/owner/repo", [])
+
+    assert report["ai_detection"]["status"] == "skipped"
+
+
+def test_pdf_shows_the_ai_written_estimate(monkeypatch):
+    report, log = scan_with_detector(monkeypatch, lambda model, system_prompt, user_prompt: {"files": [{"path": "app.py", "ai_percent": 35}], "signals": ["Mixed style"]})
+
+    assert report_agent.build_pdf(report).startswith(b"%PDF")
+    assert any("35%" in line.getPlainText() for line in pdf_writer.detection_lines(report["ai_detection"]))
+    del report["ai_detection"]
+    assert report_agent.build_pdf(report).startswith(b"%PDF")

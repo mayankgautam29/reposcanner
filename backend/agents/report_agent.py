@@ -11,7 +11,7 @@ def get_grade(score):
     return "Poor"
 
 
-def build_report(repo, rules, ai, log):
+def build_report(repo, rules, ai, detection, log):
     if ai["status"] == "sure":
         final_score = round((rules["score"] + ai["review"]["score"]) / 2)
         suggestions = rules["suggestions"] + ai["review"]["tips"]
@@ -33,6 +33,7 @@ def build_report(repo, rules, ai, log):
             "quality": rules["quality"],
         },
         "ai": ai,
+        "ai_detection": detection,
         "final_score": final_score,
         "grade": get_grade(final_score),
         "suggestions": suggestions,

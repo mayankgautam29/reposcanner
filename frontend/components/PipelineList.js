@@ -4,6 +4,7 @@ const AGENTS = [
   { name: "Router", job: "Sends easy work to a small model, hard code to a strong one." },
   { name: "AI Review", job: "Reads the README and main code like a human reviewer." },
   { name: "Validator", job: "A second model re-checks the review and gives a confidence." },
+  { name: "AI Detector", job: "Estimates how much of the code an AI wrote." },
   { name: "Report", job: "Combines the scores into one report you can save." },
 ];
 

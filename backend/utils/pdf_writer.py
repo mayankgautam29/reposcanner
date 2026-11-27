@@ -58,6 +58,28 @@ def ai_lines(ai):
     return story
 
 
+def detection_lines(detection):
+    if detection is None:
+        return [paragraph("Not part of this report.")]
+    if detection["status"] == "skipped":
+        return [paragraph("Skipped because there was not enough source code to estimate.")]
+    if detection["status"] == "unavailable":
+        return [paragraph("The AI models were not available, so no estimate was made.")]
+
+    story = [
+        paragraph(
+            f"About {detection['percent']}% of the checked code looks AI-written ({detection['label']}). "
+            f"Based on {detection['files_checked']} file(s) and {detection['lines_checked']} lines."
+        )
+    ]
+    story += bullet_list(f"{item['path']}: {item['percent']}%" for item in detection["files"])
+    if detection["signals"]:
+        story.append(paragraph("What the model noticed", "Heading3"))
+        story += bullet_list(detection["signals"])
+    story.append(paragraph("This is an estimate by an AI model. No tool can prove who wrote code."))
+    return story
+
+
 def make_pdf(report):
     buffer = BytesIO()
     document = SimpleDocTemplate(buffer, pagesize=A4, title="Repository Scan Report")
@@ -74,6 +96,9 @@ def make_pdf(report):
         Spacer(1, 12),
         paragraph("AI review", "Heading2"),
         *ai_lines(report["ai"]),
+        Spacer(1, 12),
+        paragraph("AI-written code (estimate)", "Heading2"),
+        *detection_lines(report.get("ai_detection")),
         Spacer(1, 12),
         paragraph("Suggestions", "Heading2"),
         *bullet_list(report["suggestions"] or ["No suggestions."]),

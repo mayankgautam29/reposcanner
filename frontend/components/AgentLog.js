@@ -2,7 +2,7 @@ import Section from "./Section";
 
 export default function AgentLog({ log }) {
   return (
-    <Section number="05" title="Agent log" note="Exactly what each agent did, in order." delay={300}>
+    <Section number="06" title="Agent log" note="Exactly what each agent did, in order." delay={300}>
       <ol className="ml-1.5 border-l border-ink">
         {log.map((step, index) => (
           <li key={index} className="relative pb-6 pl-8 last:pb-0">

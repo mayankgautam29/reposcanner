@@ -1,4 +1,5 @@
 import AgentLog from "./AgentLog";
+import AiDetection from "./AiDetection";
 import AiReview from "./AiReview";
 import RepoFacts from "./RepoFacts";
 import RuleFindings from "./RuleFindings";
@@ -12,6 +13,7 @@ export default function Report({ report }) {
       <RepoFacts report={report} />
       <RuleFindings report={report} />
       <AiReview report={report} />
+      <AiDetection report={report} />
       <Suggestions suggestions={report.suggestions} />
       <AgentLog log={report.log} />
     </div>

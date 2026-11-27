@@ -1,6 +1,6 @@
 # AI GitHub Repo Scanner
 
-Paste a public GitHub link. Six small agents download the repo, check it with rules, review it with Gemini models, double-check the review with a second model, and show a score out of 100 with a PDF report.
+Paste a public GitHub link. Seven small agents download the repo, check it with rules, review it with Gemini models, double-check the review with a second model, and show a score out of 100 with a PDF report.
 
 - Frontend: Next.js + Tailwind CSS (`frontend/`)
 - Backend: Python + FastAPI (`backend/`)
@@ -96,6 +96,7 @@ reposcanner/
 │   │   ├── router_agent.py      picks the small or the strong model
 │   │   ├── review_agent.py      sends README + code to the chosen Gemini model
 │   │   ├── validator_agent.py   second model checks the review, gives confidence
+│   │   ├── detector_agent.py    estimates how much of the code an AI wrote
 │   │   └── report_agent.py      combines scores, builds the final report and PDF
 │   ├── checks/                  the "rules" used by the Rule Checker Agent
 │   │   ├── secret_patterns.py   the regular expressions (API key, password...)
@@ -150,6 +151,9 @@ reposcanner/
 | Where is Gemini actually called? | `backend/utils/llm_client.py` | `ask_text`, `ask_json` |
 | Where does Gemini get retried when it is busy? | `backend/utils/llm_client.py` | `generate` (3 tries per model), `ModelBusyError` |
 | Where does it switch to another free model? | `backend/pipeline.py` | `call_with_fallback`, `model_order` |
+| Where is the "how much AI-written code" guess made? | `backend/agents/detector_agent.py` | `run`, `pick_files`, `get_label` |
+| Where is that guess added to the report? | `backend/pipeline.py` and `backend/agents/report_agent.py` | `run_ai_detection`, `build_report` |
+| Where is it shown on the website? | `frontend/components/AiDetection.js` | |
 | Where does the second model give confidence? | `backend/agents/validator_agent.py` | `run` |
 | Where is the "confidence below 70" check? | `backend/pipeline.py` | `review_with_retries` (`if validation["confidence"] >= CONFIDENCE_LIMIT`) |
 | Where is the limit 70 set? | `backend/config.py` | `CONFIDENCE_LIMIT` |
@@ -189,3 +193,11 @@ reposcanner/
 - **Is the secret shown in the report?** No. Only the first 4 characters and `****` are shown (`hide_secret` in `secret_check.py`).
 - **What if the repo is private or the link is wrong?** `fetcher_agent.run` catches the git error and the website shows a clear message.
 - **Limits:** the long-function check works for Python files only; comment counting is a simple check on lines starting with `#`, `//`, `/*` or `*`; only files up to 200 KB are read.
+
+## AI-written code estimate
+
+- The AI Detector agent takes the 5 biggest code files (at least 15 lines each) and sends the first 3,000 characters of each to a small Gemini model.
+- The model gives each file a number from 0 to 100 for how much it looks AI-written. The overall number is the average, weighted by the lines of each file.
+- 70 and up is "Mostly AI-written", 30 to 69 is "Mixed", below 30 is "Mostly human-written".
+- It does not change the final score. It is shown in its own section and in the PDF.
+- It is only an estimate. No tool can prove who wrote code, and clean human code can look AI-written. If the models are busy the scan still finishes and the section says no estimate was made.

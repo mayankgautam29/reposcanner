@@ -10,7 +10,7 @@ export default function Hero({ onScan, running }) {
           Know what is <em className="font-normal">inside</em> a repo before you trust it.
         </h1>
         <p className="reveal mt-7 max-w-xl text-lg leading-relaxed text-ink-soft" style={{ animationDelay: "160ms" }}>
-          Paste a public GitHub link. Six small agents read the code, look for leaked keys and score it out of 100. A second
+          Paste a public GitHub link. Seven small agents read the code, look for leaked keys, guess how much an AI wrote and score it out of 100. A second
           model checks the first one&apos;s work.
         </p>
         <div className="reveal" style={{ animationDelay: "240ms" }}>

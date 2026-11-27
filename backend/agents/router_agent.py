@@ -2,7 +2,7 @@ from config import BIG_CODE_LINES, SMALL_MODEL, STRONG_MODEL
 
 
 def choose_model(task, repo, rules):
-    if task == "summarise_readme":
+    if task in ("summarise_readme", "detect_ai_code"):
         return SMALL_MODEL, "simple task"
 
     if repo["code_lines"] > BIG_CODE_LINES:
